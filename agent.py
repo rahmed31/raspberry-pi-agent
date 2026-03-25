@@ -82,7 +82,10 @@ async def start_ask_human_server(
 ) -> asyncio.AbstractServer:
     """Start the Unix socket server for ask_human IPC."""
     sock_path = config.ask_human_sock_path
-    # Remove stale socket file from a previous run
+    # Ensure tmp/ exists — on a fresh clone it may not yet exist if ensure_dirs()
+    # was skipped (e.g. scheduled-agent path) or the directory was manually deleted.
+    Path(sock_path).parent.mkdir(parents=True, exist_ok=True)
+    # Remove stale socket file left over from a previous run
     try:
         Path(sock_path).unlink()
     except FileNotFoundError:
