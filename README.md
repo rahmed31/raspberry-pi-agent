@@ -1,6 +1,6 @@
-# Claude Telegram Agent
+# Raspberry Pi Agent
 
-A self-hosted autonomous AI agent running on a Raspberry Pi, controllable via Telegram. Built as a portfolio project demonstrating production-grade async Python, modular architecture, and persistent agent memory.
+A self-hosted autonomous AI agent framework designed for Raspberry Pi. Controlled via Telegram, supports concurrent named agents with persistent memory, isolated workspaces, and scheduled runs. Built with a swap-ready inference layer targeting full local LLM support on ARM hardware.
 
 ---
 
@@ -87,9 +87,9 @@ python agent.py
 ### Run as a systemd service (persistent, starts on boot)
 
 ```ini
-# /etc/systemd/system/claude-agent.service
+# /etc/systemd/system/pi-agent.service
 [Unit]
-Description=Claude Telegram Agent
+Description=Raspberry Pi Agent
 After=network-online.target
 Wants=network-online.target
 Requires=network-online.target
