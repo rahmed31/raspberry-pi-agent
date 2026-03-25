@@ -68,7 +68,7 @@ raspberry-pi-agent/
 
 ```bash
 git clone https://github.com/youruser/raspberry-pi-agent.git
-cd claude-telegram-agent
+cd raspberry-pi-agent
 
 python3 -m venv venv
 source venv/bin/activate
@@ -97,7 +97,7 @@ Requires=network-online.target
 [Service]
 Type=simple
 User=youruser
-WorkingDirectory=/home/youruser/claude-telegram-agent
+WorkingDirectory=/home/youruser/raspberry-pi-agent
 EnvironmentFile=/home/youruser/raspberry-pi-agent/.env
 Environment=CLAUDE_CLI_COMMAND=/home/youruser/.nvm/versions/node/v24.14.0/bin/claude
 ExecStart=/home/youruser/raspberry-pi-agent/venv/bin/python3 /home/youruser/raspberry-pi-agent/agent.py
