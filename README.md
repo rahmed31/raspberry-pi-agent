@@ -16,7 +16,7 @@ A self-hosted autonomous AI agent framework designed for Raspberry Pi. Controlle
 ## Architecture
 
 ```
-claude-telegram-agent/
+raspberry-pi-agent/
   agent/
     config.py        ← All configuration and constants
     state.py         ← Async SQLite state store (aiosqlite)
@@ -67,7 +67,7 @@ claude-telegram-agent/
 ### Install
 
 ```bash
-git clone https://github.com/youruser/claude-telegram-agent.git
+git clone https://github.com/youruser/raspberry-pi-agent.git
 cd claude-telegram-agent
 
 python3 -m venv venv
@@ -98,9 +98,9 @@ Requires=network-online.target
 Type=simple
 User=youruser
 WorkingDirectory=/home/youruser/claude-telegram-agent
-EnvironmentFile=/home/youruser/claude-telegram-agent/.env
+EnvironmentFile=/home/youruser/raspberry-pi-agent/.env
 Environment=CLAUDE_CLI_COMMAND=/home/youruser/.nvm/versions/node/v24.14.0/bin/claude
-ExecStart=/home/youruser/claude-telegram-agent/venv/bin/python3 /home/youruser/claude-telegram-agent/agent.py
+ExecStart=/home/youruser/raspberry-pi-agent/venv/bin/python3 /home/youruser/raspberry-pi-agent/agent.py
 Restart=always
 RestartSec=10
 
@@ -112,8 +112,8 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable claude-agent
-sudo systemctl start claude-agent
+sudo systemctl enable pi-agent
+sudo systemctl start pi-agent
 ```
 
 ### Run tests
