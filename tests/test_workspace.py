@@ -7,7 +7,9 @@ knowledge base scaffolding, backup, and validation.
 
 import json
 import pytest
+import pytest_asyncio
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 from agent.workspace import (
     KNOWLEDGE_BASE_SCAFFOLD,
@@ -39,6 +41,19 @@ def ws(tmp_path, monkeypatch):
     monkeypatch.setattr(wm, "AGENTS_DIR", tmp_path)
     monkeypatch.setattr(cfg, "AGENTS_DIR", tmp_path)
     return tmp_path
+
+
+@pytest.fixture
+def cfg(monkeypatch):
+    """
+    Minimal AgentConfig with required env vars set — used by async compaction tests
+    that pass config through to compact_knowledge_base.  The actual LLM call is
+    always mocked, so only the object reference matters.
+    """
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test_token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123456")
+    from agent.config import AgentConfig
+    return AgentConfig()
 
 
 # ---------------------------------------------------------------------------
@@ -283,14 +298,29 @@ def _make_run_log_entries(n: int) -> list:
     ]
 
 
-def test_compact_no_op_below_threshold(ws):
+def _patch_get_response(monkeypatch, summary: str = "LLM prose summary."):
+    """
+    Replace agent.workspace.get_response with an async mock that returns `summary`.
+    The lazy import inside compact_knowledge_base means the patch must target
+    the name as it appears in the workspace module's namespace after import.
+    """
+    async def _mock(prompt, config, agent_mode=False):
+        return summary
+    # compact_knowledge_base does `from agent.claude import get_response` lazily,
+    # so we patch agent.claude.get_response to intercept that import.
+    monkeypatch.setattr("agent.claude.get_response", _mock)
+
+
+@pytest.mark.asyncio
+async def test_compact_no_op_below_threshold(ws, cfg, monkeypatch):
     """No compaction when run_log is at or below threshold."""
+    _patch_get_response(monkeypatch)
     path = agent_workspace("test_agent")
     kb   = json.loads((path / "knowledge_base.json").read_text())
     kb["run_log"] = _make_run_log_entries(RUN_LOG_COMPACT_THRESHOLD)
     (path / "knowledge_base.json").write_text(json.dumps(kb))
 
-    result = compact_knowledge_base("test_agent")
+    result = await compact_knowledge_base("test_agent", cfg)
     assert result is None
 
     # run_log unchanged
@@ -298,84 +328,120 @@ def test_compact_no_op_below_threshold(ws):
     assert len(kb2["run_log"]) == RUN_LOG_COMPACT_THRESHOLD
 
 
-def test_compact_fires_above_threshold(ws):
+@pytest.mark.asyncio
+async def test_compact_fires_above_threshold(ws, cfg, monkeypatch):
     """Compaction fires when run_log exceeds threshold."""
-    path    = agent_workspace("test_agent")
-    kb      = json.loads((path / "knowledge_base.json").read_text())
-    n       = RUN_LOG_COMPACT_THRESHOLD + 1
-    kb["run_log"] = _make_run_log_entries(n)
+    _patch_get_response(monkeypatch)
+    path = agent_workspace("test_agent")
+    kb   = json.loads((path / "knowledge_base.json").read_text())
+    kb["run_log"] = _make_run_log_entries(RUN_LOG_COMPACT_THRESHOLD + 1)
     (path / "knowledge_base.json").write_text(json.dumps(kb))
 
-    result = compact_knowledge_base("test_agent")
+    result = await compact_knowledge_base("test_agent", cfg)
     assert result is not None
     assert "archived" in result
 
 
-def test_compact_keeps_recent_entries(ws):
+@pytest.mark.asyncio
+async def test_compact_keeps_recent_entries(ws, cfg, monkeypatch):
     """After compaction, run_log has exactly RUN_LOG_KEEP_RECENT entries."""
-    path    = agent_workspace("test_agent")
-    kb      = json.loads((path / "knowledge_base.json").read_text())
+    _patch_get_response(monkeypatch)
+    path = agent_workspace("test_agent")
+    kb   = json.loads((path / "knowledge_base.json").read_text())
     kb["run_log"] = _make_run_log_entries(RUN_LOG_COMPACT_THRESHOLD + 5)
     (path / "knowledge_base.json").write_text(json.dumps(kb))
 
-    compact_knowledge_base("test_agent")
+    await compact_knowledge_base("test_agent", cfg)
 
     kb2 = json.loads((path / "knowledge_base.json").read_text())
     assert len(kb2["run_log"]) == RUN_LOG_KEEP_RECENT
 
 
-def test_compact_archives_older_entries(ws):
-    """Older entries move to run_log_archive."""
-    path    = agent_workspace("test_agent")
-    kb      = json.loads((path / "knowledge_base.json").read_text())
-    n       = RUN_LOG_COMPACT_THRESHOLD + 5
+@pytest.mark.asyncio
+async def test_compact_archives_older_entries(ws, cfg, monkeypatch):
+    """Older entries are archived as a single prose summary object."""
+    _patch_get_response(monkeypatch)
+    path = agent_workspace("test_agent")
+    kb   = json.loads((path / "knowledge_base.json").read_text())
+    n    = RUN_LOG_COMPACT_THRESHOLD + 5
     kb["run_log"] = _make_run_log_entries(n)
     (path / "knowledge_base.json").write_text(json.dumps(kb))
 
-    compact_knowledge_base("test_agent")
+    await compact_knowledge_base("test_agent", cfg)
 
     kb2      = json.loads((path / "knowledge_base.json").read_text())
     archived = kb2["run_log_archive"]
-    assert len(archived) == n - RUN_LOG_KEEP_RECENT
+    # One prose object per compaction call (not one dict per run)
+    assert len(archived) == 1
+    assert len(archived[0]["runs_covered"]) == n - RUN_LOG_KEEP_RECENT
 
 
-def test_compact_archive_strips_goal_field(ws):
-    """Archived entries only contain run_id, timestamp, outcome, key_learnings."""
-    path    = agent_workspace("test_agent")
-    kb      = json.loads((path / "knowledge_base.json").read_text())
+@pytest.mark.asyncio
+async def test_compact_archive_has_prose_summary(ws, cfg, monkeypatch):
+    """Archive entry has summary, runs_covered, and compacted_at; no raw run fields."""
+    _patch_get_response(monkeypatch, summary="Agent accomplished X and learned Y.")
+    path = agent_workspace("test_agent")
+    kb   = json.loads((path / "knowledge_base.json").read_text())
     kb["run_log"] = _make_run_log_entries(RUN_LOG_COMPACT_THRESHOLD + 1)
     (path / "knowledge_base.json").write_text(json.dumps(kb))
 
-    compact_knowledge_base("test_agent")
+    await compact_knowledge_base("test_agent", cfg)
 
     kb2   = json.loads((path / "knowledge_base.json").read_text())
     entry = kb2["run_log_archive"][0]
-    assert "goal" not in entry
-    assert "run_id"        in entry
-    assert "timestamp"     in entry
-    assert "outcome"       in entry
-    assert "key_learnings" in entry
+    assert "summary"       in entry
+    assert "runs_covered"  in entry
+    assert "compacted_at"  in entry
+    assert entry["summary"] == "Agent accomplished X and learned Y."
+    # Raw run fields should not appear at the archive-object level
+    assert "run_id"        not in entry
+    assert "outcome"       not in entry
+    assert "key_learnings" not in entry
 
 
-def test_compact_accumulates_archive_across_calls(ws):
-    """Calling compact twice accumulates entries in run_log_archive."""
+@pytest.mark.asyncio
+async def test_compact_accumulates_archive_across_calls(ws, cfg, monkeypatch):
+    """Calling compact twice produces two prose summary objects in run_log_archive."""
+    _patch_get_response(monkeypatch)
     path = agent_workspace("test_agent")
 
     # First compaction
-    kb          = json.loads((path / "knowledge_base.json").read_text())
+    kb = json.loads((path / "knowledge_base.json").read_text())
     kb["run_log"] = _make_run_log_entries(RUN_LOG_COMPACT_THRESHOLD + 1)
     (path / "knowledge_base.json").write_text(json.dumps(kb))
-    compact_knowledge_base("test_agent")
-
-    first_archive_count = len(
-        json.loads((path / "knowledge_base.json").read_text())["run_log_archive"]
-    )
+    await compact_knowledge_base("test_agent", cfg)
 
     # Second compaction
-    kb2           = json.loads((path / "knowledge_base.json").read_text())
+    kb2 = json.loads((path / "knowledge_base.json").read_text())
     kb2["run_log"] = _make_run_log_entries(RUN_LOG_COMPACT_THRESHOLD + 1)
     (path / "knowledge_base.json").write_text(json.dumps(kb2))
-    compact_knowledge_base("test_agent")
+    await compact_knowledge_base("test_agent", cfg)
 
     kb3 = json.loads((path / "knowledge_base.json").read_text())
-    assert len(kb3["run_log_archive"]) > first_archive_count
+    # Each compaction appends one prose object
+    assert len(kb3["run_log_archive"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_compact_falls_back_on_llm_error(ws, cfg, monkeypatch):
+    """If the LLM call fails, compaction falls back to mechanical stripping and still fires."""
+    async def _failing_get_response(prompt, config, agent_mode=False):
+        raise RuntimeError("LLM unavailable")
+    monkeypatch.setattr("agent.claude.get_response", _failing_get_response)
+
+    path = agent_workspace("test_agent")
+    kb   = json.loads((path / "knowledge_base.json").read_text())
+    kb["run_log"] = _make_run_log_entries(RUN_LOG_COMPACT_THRESHOLD + 1)
+    (path / "knowledge_base.json").write_text(json.dumps(kb))
+
+    result = await compact_knowledge_base("test_agent", cfg)
+
+    # Compaction should still have fired and returned a status message
+    assert result is not None
+    assert "archived" in result
+
+    # An archive entry should exist with a non-empty summary (mechanical fallback)
+    kb2   = json.loads((path / "knowledge_base.json").read_text())
+    entry = kb2["run_log_archive"][0]
+    assert "summary" in entry
+    assert len(entry["summary"]) > 0

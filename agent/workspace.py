@@ -275,17 +275,56 @@ def validate_knowledge_base_post_run(
     return None
 
 
-def compact_knowledge_base(agent_name: str) -> Optional[str]:
+def _build_compaction_prompt(agent_name: str, entries: list) -> str:
+    """
+    Build the prompt sent to the LLM when compacting run_log entries.
+    Each entry is formatted as a single line for token efficiency.
+    """
+    n = len(entries)
+    lines = []
+    for e in entries:
+        run_id    = e.get("run_id", "?")
+        outcome   = e.get("outcome", "")
+        learnings = ", ".join(e.get("key_learnings", [])) or "none"
+        lines.append(f"run_id: {run_id} | outcome: {outcome} | key_learnings: {learnings}")
+    runs_block = "\n".join(lines)
+
+    return (
+        f'You are summarizing the run history of an autonomous agent named "{agent_name}".\n'
+        f"The following {n} {'run' if n == 1 else 'runs'} are being archived from its knowledge base "
+        f"to reduce token usage.\n"
+        f"Produce a single dense paragraph (400 words or fewer) that captures:\n"
+        f"- What the agent accomplished across these runs\n"
+        f"- Recurring patterns or obstacles\n"
+        f"- Key learnings that should inform future runs\n\n"
+        f"Do not repeat run IDs or timestamps. Write in plain prose. Be direct.\n\n"
+        f"Runs being archived:\n{runs_block}"
+    )
+
+
+async def compact_knowledge_base(
+    agent_name: str,
+    config: "AgentConfig",
+) -> Optional[str]:
     """
     Compact the knowledge base run_log if it exceeds RUN_LOG_COMPACT_THRESHOLD.
 
     Keeps the RUN_LOG_KEEP_RECENT most recent entries verbatim in run_log.
-    Older entries are stripped to (run_id, timestamp, outcome, key_learnings)
-    and appended to run_log_archive — no data is deleted.
+    Older entries are summarised into a single prose paragraph by the LLM and
+    appended to run_log_archive as one object per compaction event — no data
+    is deleted.
+
+    Falls back to mechanical field-stripping if the LLM call fails, so
+    compaction never blocks a run.
 
     Returns a status message if compaction occurred, None if not needed.
     Called automatically after every successful named agent run.
     """
+    # Lazy import to avoid a circular dependency at module load time.
+    # (workspace → claude → config is fine at runtime, but the module-level
+    # import would create a cycle during package initialisation.)
+    from agent.claude import get_response
+
     kb_path = AGENTS_DIR / agent_name / "knowledge_base.json"
 
     try:
@@ -297,21 +336,35 @@ def compact_knowledge_base(agent_name: str) -> Optional[str]:
     if len(run_log) <= RUN_LOG_COMPACT_THRESHOLD:
         return None
 
+    # Split: keep the most recent entries verbatim, archive the rest.
+    # On first fire (run_log == 21 entries) this archives 11 entries and keeps 10.
+    # On every subsequent fire the count is also 11 because run_log was trimmed
+    # to RUN_LOG_KEEP_RECENT (10) after the last compaction.
     to_archive = run_log[:-RUN_LOG_KEEP_RECENT]
     to_keep    = run_log[-RUN_LOG_KEEP_RECENT:]
 
-    # Strip each archived entry to just the durable knowledge fields
-    archived = [
-        {
-            "run_id":        e.get("run_id", "?"),
-            "timestamp":     e.get("timestamp", ""),
-            "outcome":       e.get("outcome", ""),
-            "key_learnings": e.get("key_learnings", []),
-        }
-        for e in to_archive
-    ]
+    # Ask the LLM to produce a prose summary of the entries being archived.
+    try:
+        summary_prompt = _build_compaction_prompt(agent_name, to_archive)
+        # agent_mode=False: uses claude_chat_timeout (120 s), no tool loop needed.
+        summary = await get_response(summary_prompt, config, agent_mode=False)
+    except Exception:
+        # LLM call failed — fall back to a mechanical concatenation so compaction
+        # still fires and the run is not blocked.
+        summary = "; ".join(
+            f"{e.get('run_id', '?')}: {e.get('outcome', '')} — "
+            f"{', '.join(e.get('key_learnings', []))}"
+            for e in to_archive
+        )
 
-    kb["run_log_archive"] = kb.get("run_log_archive", []) + archived
+    # One prose archive object per compaction event.
+    archive_entry = {
+        "compacted_at": datetime.utcnow().isoformat(),
+        "runs_covered": [e.get("run_id", "?") for e in to_archive],
+        "summary":      summary,
+    }
+
+    kb["run_log_archive"] = kb.get("run_log_archive", []) + [archive_entry]
     kb["run_log"]         = to_keep
 
     try:
@@ -321,6 +374,6 @@ def compact_knowledge_base(agent_name: str) -> Optional[str]:
 
     return (
         f"Knowledge base compacted: {len(to_archive)} older run_log "
-        f"{'entry' if len(to_archive) == 1 else 'entries'} archived, "
+        f"{'entry' if len(to_archive) == 1 else 'entries'} archived as a prose summary, "
         f"{len(to_keep)} recent {'entry' if len(to_keep) == 1 else 'entries'} kept."
     )

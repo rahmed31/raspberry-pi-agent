@@ -242,8 +242,9 @@ class NamedAgentTask:
 
             # Compact run_log if it has grown beyond the threshold.
             # Only fires when post-run validation passed — skipped on KB errors.
+            # compact_knowledge_base is async and requires config for the LLM call.
             if kb_post_warning is None:
-                compact_msg = compact_knowledge_base(self.agent_name)
+                compact_msg = await compact_knowledge_base(self.agent_name, self.config)
                 if compact_msg:
                     LOGGER.info("KB compaction for %s: %s", self.agent_name, compact_msg)
                     await self._send(f"ℹ️ {compact_msg}")
