@@ -1,0 +1,51 @@
+# Environment
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# Runtime directories — created automatically, never committed
+data/
+agents/
+tmp/
+incoming/
+logs/
+
+# Credentials — never commit these
+.credentials/
+*.credentials
+
+# macOS
+.DS_Store
+
+# Node (Puppeteer installed globally, not in project)
+node_modules/
+package-lock.json
+package.json
