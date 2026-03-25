@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-agent_main.py — Entry point for the Claude Telegram Agent.
+agent.py — Entry point for the Raspberry Pi Agent.
 
 Usage:
-    python agent_main.py                        # normal operation
-    python agent_main.py --scheduled-agent <n>  # run a scheduled named agent
+    python agent.py                        # normal operation
+    python agent.py --scheduled-agent <n>  # run a scheduled named agent
 
 Environment variables (required):
     TELEGRAM_BOT_TOKEN
@@ -16,6 +16,7 @@ See agent/config.py for all optional environment variables.
 import asyncio
 import logging
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -55,6 +56,12 @@ async def _handle_ask_human_conn(
             reply = await asyncio.wait_for(fut, timeout=600)
         except asyncio.TimeoutError:
             reply = "(no reply received within timeout)"
+            try:
+                await handler.telegram.send_message(
+                    "No reply received within 10 minutes. Claude has continued without your input."
+                )
+            except Exception:
+                pass
         except asyncio.CancelledError:
             reply = "(task cancelled)"
 
@@ -195,6 +202,15 @@ async def run_forever(config: AgentConfig) -> None:
     store = StateStore(config.db_path)
     await store.init()
     await store.trim_processed_updates()
+
+    loop = asyncio.get_running_loop()
+
+    def _handle_sigterm() -> None:
+        LOGGER.info("SIGTERM received — shutting down gracefully.")
+        for task in asyncio.all_tasks(loop):
+            task.cancel()
+
+    loop.add_signal_handler(signal.SIGTERM, _handle_sigterm)
 
     async with TelegramClient(
         bot_token=config.telegram_bot_token,

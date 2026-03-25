@@ -12,9 +12,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from agent.claude import InferenceError, get_response
-from agent.config import AGENTS_DIR, AgentConfig
+from agent.config import AGENTS_DIR, TMP_DIR, AgentConfig
 from agent.prompts import build_named_agent_prompt, build_one_off_prompt
-from agent.config import TMP_DIR
 from agent.workspace import (
     backup_knowledge_base,
     validate_knowledge_base,

@@ -98,8 +98,7 @@ Requires=network-online.target
 Type=simple
 User=youruser
 WorkingDirectory=/home/youruser/claude-telegram-agent
-Environment=TELEGRAM_BOT_TOKEN=your_token
-Environment=TELEGRAM_CHAT_ID=your_chat_id
+EnvironmentFile=/home/youruser/claude-telegram-agent/.env
 Environment=CLAUDE_CLI_COMMAND=/home/youruser/.nvm/versions/node/v24.14.0/bin/claude
 ExecStart=/home/youruser/claude-telegram-agent/venv/bin/python3 /home/youruser/claude-telegram-agent/agent.py
 Restart=always
@@ -108,6 +107,8 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 ```
+
+> **Security note:** Use `EnvironmentFile=` to load secrets from your `.env` file rather than inlining them as `Environment=` directives in the unit file. Unit files are readable by any user who can run `systemctl cat`, and are stored unencrypted in `/etc/systemd/system/`.
 
 ```bash
 sudo systemctl daemon-reload
