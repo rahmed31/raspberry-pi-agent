@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(python -m pytest)",
-      "Bash(python3 -m pytest)",
-      "WebFetch(domain:openclaw.ai)"
-    ]
-  }
-}

@@ -28,6 +28,9 @@ coverage.xml
 # IDE
 .vscode/settings.json
 .idea/
+
+# Claude Code
+.claude/
 *.swp
 *.swo
 
