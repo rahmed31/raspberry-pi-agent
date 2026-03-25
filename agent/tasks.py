@@ -16,6 +16,7 @@ from agent.config import AGENTS_DIR, TMP_DIR, AgentConfig
 from agent.prompts import build_named_agent_prompt, build_one_off_prompt
 from agent.workspace import (
     backup_knowledge_base,
+    compact_knowledge_base,
     validate_knowledge_base,
     validate_knowledge_base_post_run,
     wipe_tmp,
@@ -238,6 +239,14 @@ class NamedAgentTask:
             )
             if kb_post_warning:
                 await self._send(kb_post_warning)
+
+            # Compact run_log if it has grown beyond the threshold.
+            # Only fires when post-run validation passed — skipped on KB errors.
+            if kb_post_warning is None:
+                compact_msg = compact_knowledge_base(self.agent_name)
+                if compact_msg:
+                    LOGGER.info("KB compaction for %s: %s", self.agent_name, compact_msg)
+                    await self._send(f"ℹ️ {compact_msg}")
 
             prefix = (
                 f"Agent `{self.agent_name}` run `{self.run_id}` cancelled. Partial result"

@@ -12,8 +12,11 @@ from pathlib import Path
 from agent.workspace import (
     KNOWLEDGE_BASE_SCAFFOLD,
     REQUIRED_KB_KEYS,
+    RUN_LOG_COMPACT_THRESHOLD,
+    RUN_LOG_KEEP_RECENT,
     agent_workspace,
     backup_knowledge_base,
+    compact_knowledge_base,
     validate_knowledge_base,
     validate_knowledge_base_post_run,
     workspace_tree,
@@ -260,3 +263,119 @@ def test_post_run_invalid_json_restores_backup(ws):
     # Main file should be restored from backup
     restored = json.loads((path / "knowledge_base.json").read_text())
     assert REQUIRED_KB_KEYS.issubset(restored.keys())
+
+
+# ---------------------------------------------------------------------------
+# compact_knowledge_base
+# ---------------------------------------------------------------------------
+
+def _make_run_log_entries(n: int) -> list:
+    """Generate n dummy run_log entries."""
+    return [
+        {
+            "run_id":        f"run{i:03d}",
+            "timestamp":     f"2026-01-{i+1:02d}",
+            "goal":          f"goal {i}",
+            "outcome":       f"outcome {i}",
+            "key_learnings": [f"learning {i}"],
+        }
+        for i in range(n)
+    ]
+
+
+def test_compact_no_op_below_threshold(ws):
+    """No compaction when run_log is at or below threshold."""
+    path = agent_workspace("test_agent")
+    kb   = json.loads((path / "knowledge_base.json").read_text())
+    kb["run_log"] = _make_run_log_entries(RUN_LOG_COMPACT_THRESHOLD)
+    (path / "knowledge_base.json").write_text(json.dumps(kb))
+
+    result = compact_knowledge_base("test_agent")
+    assert result is None
+
+    # run_log unchanged
+    kb2 = json.loads((path / "knowledge_base.json").read_text())
+    assert len(kb2["run_log"]) == RUN_LOG_COMPACT_THRESHOLD
+
+
+def test_compact_fires_above_threshold(ws):
+    """Compaction fires when run_log exceeds threshold."""
+    path    = agent_workspace("test_agent")
+    kb      = json.loads((path / "knowledge_base.json").read_text())
+    n       = RUN_LOG_COMPACT_THRESHOLD + 1
+    kb["run_log"] = _make_run_log_entries(n)
+    (path / "knowledge_base.json").write_text(json.dumps(kb))
+
+    result = compact_knowledge_base("test_agent")
+    assert result is not None
+    assert "archived" in result
+
+
+def test_compact_keeps_recent_entries(ws):
+    """After compaction, run_log has exactly RUN_LOG_KEEP_RECENT entries."""
+    path    = agent_workspace("test_agent")
+    kb      = json.loads((path / "knowledge_base.json").read_text())
+    kb["run_log"] = _make_run_log_entries(RUN_LOG_COMPACT_THRESHOLD + 5)
+    (path / "knowledge_base.json").write_text(json.dumps(kb))
+
+    compact_knowledge_base("test_agent")
+
+    kb2 = json.loads((path / "knowledge_base.json").read_text())
+    assert len(kb2["run_log"]) == RUN_LOG_KEEP_RECENT
+
+
+def test_compact_archives_older_entries(ws):
+    """Older entries move to run_log_archive."""
+    path    = agent_workspace("test_agent")
+    kb      = json.loads((path / "knowledge_base.json").read_text())
+    n       = RUN_LOG_COMPACT_THRESHOLD + 5
+    kb["run_log"] = _make_run_log_entries(n)
+    (path / "knowledge_base.json").write_text(json.dumps(kb))
+
+    compact_knowledge_base("test_agent")
+
+    kb2      = json.loads((path / "knowledge_base.json").read_text())
+    archived = kb2["run_log_archive"]
+    assert len(archived) == n - RUN_LOG_KEEP_RECENT
+
+
+def test_compact_archive_strips_goal_field(ws):
+    """Archived entries only contain run_id, timestamp, outcome, key_learnings."""
+    path    = agent_workspace("test_agent")
+    kb      = json.loads((path / "knowledge_base.json").read_text())
+    kb["run_log"] = _make_run_log_entries(RUN_LOG_COMPACT_THRESHOLD + 1)
+    (path / "knowledge_base.json").write_text(json.dumps(kb))
+
+    compact_knowledge_base("test_agent")
+
+    kb2   = json.loads((path / "knowledge_base.json").read_text())
+    entry = kb2["run_log_archive"][0]
+    assert "goal" not in entry
+    assert "run_id"        in entry
+    assert "timestamp"     in entry
+    assert "outcome"       in entry
+    assert "key_learnings" in entry
+
+
+def test_compact_accumulates_archive_across_calls(ws):
+    """Calling compact twice accumulates entries in run_log_archive."""
+    path = agent_workspace("test_agent")
+
+    # First compaction
+    kb          = json.loads((path / "knowledge_base.json").read_text())
+    kb["run_log"] = _make_run_log_entries(RUN_LOG_COMPACT_THRESHOLD + 1)
+    (path / "knowledge_base.json").write_text(json.dumps(kb))
+    compact_knowledge_base("test_agent")
+
+    first_archive_count = len(
+        json.loads((path / "knowledge_base.json").read_text())["run_log_archive"]
+    )
+
+    # Second compaction
+    kb2           = json.loads((path / "knowledge_base.json").read_text())
+    kb2["run_log"] = _make_run_log_entries(RUN_LOG_COMPACT_THRESHOLD + 1)
+    (path / "knowledge_base.json").write_text(json.dumps(kb2))
+    compact_knowledge_base("test_agent")
+
+    kb3 = json.loads((path / "knowledge_base.json").read_text())
+    assert len(kb3["run_log_archive"]) > first_archive_count

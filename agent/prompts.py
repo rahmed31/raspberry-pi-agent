@@ -115,6 +115,8 @@ NAMED_AGENT_PROMPT = textwrap.dedent("""
 
     KNOWLEDGE BASE — this is your persistent memory across runs:
     - Read {workspace_dir}/knowledge_base.json at the START of every run to understand your history
+    - run_log contains your most recent runs in full detail
+    - run_log_archive contains older compacted runs (outcome + key_learnings only) — read for long-term context
     - Update it at the END of every run with new learnings — increment run_count, update last_updated
     - NEVER change the top-level JSON structure — only update values within the existing keys
     - Append a new entry to run_log for every run with run_id, timestamp, goal, outcome, key_learnings

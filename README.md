@@ -216,9 +216,20 @@ The knowledge base uses a fixed JSON scaffold. The agent fills in values but nev
     "data_files": [],
     "external_services_used": []
   },
-  "run_log": []
+  "run_log": [],
+  "run_log_archive": []
 }
 ```
+
+### Knowledge base compaction
+
+As an agent accumulates runs, `run_log` grows by one entry per run. To prevent this from consuming excessive context window tokens, compaction runs automatically after every successful run once `run_log` exceeds 20 entries:
+
+- The **10 most recent** entries are kept verbatim in `run_log`
+- Older entries are stripped to `run_id`, `timestamp`, `outcome`, and `key_learnings`, then appended to `run_log_archive`
+- No data is deleted — the archive accumulates over the agent's lifetime
+- The agent is instructed to read both `run_log` and `run_log_archive` at the start of each run
+- A Telegram notification is sent when compaction fires
 
 ---
 

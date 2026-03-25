@@ -41,12 +41,24 @@ KNOWLEDGE_BASE_SCAFFOLD = {
         "external_services_used": [],
     },
     "run_log": [],
+    # Older run_log entries are compacted here automatically after RUN_LOG_COMPACT_THRESHOLD runs.
+    # Each entry retains: run_id, timestamp, outcome, key_learnings.
+    "run_log_archive": [],
 }
 
 REQUIRED_KB_KEYS = {
     "agent_name", "purpose", "last_updated", "run_count",
-    "knowledge", "state", "resources", "run_log",
+    "knowledge", "state", "resources", "run_log", "run_log_archive",
 }
+
+# ---------------------------------------------------------------------------
+# Knowledge base compaction settings
+# ---------------------------------------------------------------------------
+
+# When run_log exceeds this many entries, compaction is triggered automatically.
+RUN_LOG_COMPACT_THRESHOLD = 20
+# Number of recent run_log entries to keep verbatim after compaction.
+RUN_LOG_KEEP_RECENT       = 10
 
 
 # ---------------------------------------------------------------------------
@@ -261,3 +273,54 @@ def validate_knowledge_base_post_run(
         )
 
     return None
+
+
+def compact_knowledge_base(agent_name: str) -> Optional[str]:
+    """
+    Compact the knowledge base run_log if it exceeds RUN_LOG_COMPACT_THRESHOLD.
+
+    Keeps the RUN_LOG_KEEP_RECENT most recent entries verbatim in run_log.
+    Older entries are stripped to (run_id, timestamp, outcome, key_learnings)
+    and appended to run_log_archive — no data is deleted.
+
+    Returns a status message if compaction occurred, None if not needed.
+    Called automatically after every successful named agent run.
+    """
+    kb_path = AGENTS_DIR / agent_name / "knowledge_base.json"
+
+    try:
+        kb = json.loads(kb_path.read_text())
+    except Exception:
+        return None
+
+    run_log = kb.get("run_log", [])
+    if len(run_log) <= RUN_LOG_COMPACT_THRESHOLD:
+        return None
+
+    to_archive = run_log[:-RUN_LOG_KEEP_RECENT]
+    to_keep    = run_log[-RUN_LOG_KEEP_RECENT:]
+
+    # Strip each archived entry to just the durable knowledge fields
+    archived = [
+        {
+            "run_id":        e.get("run_id", "?"),
+            "timestamp":     e.get("timestamp", ""),
+            "outcome":       e.get("outcome", ""),
+            "key_learnings": e.get("key_learnings", []),
+        }
+        for e in to_archive
+    ]
+
+    kb["run_log_archive"] = kb.get("run_log_archive", []) + archived
+    kb["run_log"]         = to_keep
+
+    try:
+        kb_path.write_text(json.dumps(kb, indent=2))
+    except Exception:
+        return None
+
+    return (
+        f"Knowledge base compacted: {len(to_archive)} older run_log "
+        f"{'entry' if len(to_archive) == 1 else 'entries'} archived, "
+        f"{len(to_keep)} recent {'entry' if len(to_keep) == 1 else 'entries'} kept."
+    )
